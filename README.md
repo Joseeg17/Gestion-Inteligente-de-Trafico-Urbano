@@ -175,5 +175,3 @@ Pontificia Universidad Javeriana
 Sistemas Distribuidos – 2026
 
 ---
-
-Si quieres, puedo ayudarte a dejarlo aún más fuerte para GitHub (con badges, instrucciones tipo Docker o despliegue en red real).
