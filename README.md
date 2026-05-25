@@ -1,101 +1,98 @@
-# Gestion-Inteligente-de-Trafico-Urbano
+# 🚦 Gestión Inteligente de Tráfico Urbano
 
-Sistema distribuido para el monitoreo, análisis y control del tráfico en tiempo real, basado en una arquitectura desacoplada y comunicación mediante ZeroMQ.
-
-## Descripción
-
-Este proyecto implementa una plataforma distribuida que simula una ciudad organizada en una cuadrícula de 3x3 intersecciones. En cada intersección operan distintos sensores que generan eventos de tráfico, los cuales son procesados para:
-
-* Detectar congestión
-* Controlar semáforos automáticamente
-* Permitir monitoreo y control manual
-* Garantizar tolerancia a fallos
-
-El sistema está dividido en tres nodos (PC1, PC2, PC3), cada uno con responsabilidades específicas.
+Sistema distribuido para el monitoreo, análisis y control de tráfico urbano en tiempo real, basado en una arquitectura desacoplada con ZeroMQ.
 
 ---
 
-## Arquitectura del Sistema
+## 📌 Descripción
 
-El sistema sigue una arquitectura distribuida por capas:
+Este sistema simula una ciudad en una cuadrícula 3x3 de intersecciones, donde diferentes sensores generan eventos de tráfico que son procesados en tiempo real.
 
-| Capa                     | Máquina | Responsabilidad                                          |
-| ------------------------ | ------- | -------------------------------------------------------- |
-| Sensores y Broker        | PC1     | Generación y publicación de eventos                      |
-| Analítica y Control      | PC2     | Procesamiento, toma de decisiones y control de semáforos |
-| Monitoreo y Persistencia | PC3     | Base de datos, consultas y control manual                |
+El sistema permite:
 
-### Patrones de comunicación (ZeroMQ)
-
-* PUB/SUB: transmisión de eventos desde sensores
-* PUSH/PULL: persistencia en base de datos
-* REQ/REP: consultas del usuario
+- Detección de congestión en tiempo real
+- Control automático de semáforos
+- Persistencia distribuida de datos
+- Monitoreo centralizado del estado del sistema
+- Tolerancia a fallos entre nodos
 
 ---
 
-## Funcionalidades principales
+## 🧱 Arquitectura del sistema
 
-* Simulación de sensores:
-
-  * Cámara
-  * Espira inductiva
-  * GPS
-
-* Detección de estados de tráfico:
-
-  * Tráfico normal
-  * Congestión
-  * Priorización de vía
-
-* Control automático de semáforos
-
-* Consultas desde el módulo de monitoreo:
-
-  * Estado actual
-  * Histórico
-  * Congestión histórica
-
-* Comandos manuales:
-
-  * `PRIORIZAR_VIA`
-  * `CAMBIO_MANUAL`
+| Nodo | Máquina | Responsabilidad |
+|------|--------|----------------|
+| PC1 | Sensores + Broker | Generación y envío de eventos |
+| PC2 | Analítica + Control + BD réplica + Healthcheck | Procesamiento y decisiones |
+| PC3 | Base de datos principal + monitoreo | Persistencia y consultas |
 
 ---
 
-## Reglas de tráfico
+## 🔌 Comunicación (ZeroMQ)
 
-| Estado       | Condición                    | Acción                   |
-| ------------ | ---------------------------- | ------------------------ |
-| Normal       | Lq < 5, Vp > 35, Cv < 10     | Ciclo estándar           |
-| Congestión   | Lq ≥ 5 OR Vp ≤ 20 OR Cv ≥ 20 | Extender tiempo en verde |
-| Priorización | Comando manual               | Verde inmediato          |
-
----
-
-## Tolerancia a fallos
-
-El sistema implementa un mecanismo de failover automático:
-
-* Health Check desde PC2 hacia PC3
-* Si PC3 falla:
-
-  * Se redirige la persistencia a la base de datos réplica en PC2
-* Recuperación automática cuando PC3 vuelve a estar disponible
+- PUB/SUB → eventos de sensores
+- PUSH/PULL → comandos y persistencia
+- REQ/REP → consultas de monitoreo
+- PUSH → heartbeat
 
 ---
 
-## Tecnologías utilizadas
+## ⚙️ Componentes del sistema
 
-* Python 3.10+
-* ZeroMQ (pyzmq)
-* SQLite
-* JSON
-* threading y time
-* matplotlib (para métricas)
+### 🟢 PC1
+- `broker.py`
+- sensores (camara / espira / gps)
 
 ---
 
-## Estructura del proyecto
+### 🟡 PC2
+
+- `analitica.py` → clasifica tráfico y genera decisiones
+- `control_semaforos.py` → aplica cambios de estado
+- `bd_replica.py` → persistencia secundaria
+- `health_check.py` → monitoreo de disponibilidad de PC3
+
+---
+
+### 🔵 PC3
+
+- `monitoreo.py` → consultas, lógica de respuesta y BD principal
+
+---
+
+## 🚦 Lógica de tráfico
+
+| Estado | Condición | Acción |
+|--------|----------|--------|
+| Normal | Bajo volumen y velocidad estable | ROJO/VERDE estándar |
+| Congestión | Alto flujo o baja velocidad | Extensión de verde |
+| Priorización | GPS o evento crítico | Verde inmediato |
+
+---
+
+## 🔁 Tolerancia a fallos
+
+- PC2 ejecuta healthcheck contra PC3
+- Si PC3 falla:
+  - Se detecta caída por TCP
+  - Se registra error en logs
+- Cuando vuelve:
+  - Se restablece conexión automáticamente
+
+---
+
+## 🧰 Tecnologías
+
+- Python 3.10+
+- ZeroMQ (pyzmq)
+- SQLite
+- JSON
+- threading
+- sockets TCP
+
+---
+
+## 📁 Estructura del proyecto
 
 ```bash
 trafico_urbano/
@@ -129,41 +126,65 @@ config.json
 
 ---
 
-### 2. Ejecución por nodo
 
-#### PC1 (Sensores y Broker)
+---
+
+## ▶️ Cómo ejecutar el sistema
+
+### ⚠️ IMPORTANTE
+Ejecutar en este orden:
+
+1. PC3 primero
+2. PC2 segundo
+3. PC1 al final
+
+---
+
+## 🖥️ Terminales necesarias (6 en total)
+
+---
+
+### 🟦 PC1 (Terminal 1)
 
 ```bash
-python sensor_camara.py
-python sensor_espira.py
-python sensor_gps.py
 python broker.py
+---
 ```
 
-#### PC2 (Analítica y Control)
-
+🟨 PC2 (Terminal 2 - Analítica)
 ```bash
 python analitica.py
+```
+🟨 PC2 (Terminal 3 - Semáforos)
+```bash
 python control_semaforos.py
+```
+🟨 PC2 (Terminal 4 - BD réplica)
+```bash
 python bd_replica.py
-python health_check.py
+```
+🟨 PC2 (Terminal 5 - Healthcheck)
+```bash
+python healthcheck.py
 ```
 
-#### PC3 (Base de datos y Monitoreo)
-
+🟩 PC3 (Terminal 6 - Monitoreo)
 ```bash
-python bd_principal.py
 python monitoreo.py
 ```
----
 
-## Seguridad
-
-* Validación de mensajes JSON
-* Control de acceso centralizado en el módulo de monitoreo
-* Trazabilidad mediante timestamps
-
----
+🧪 Flujo del sistema
+```bash
+Sensores (PC1)
+    ↓
+Broker
+    ↓
+Analítica (PC2)
+    ↓
+ ┌──────────────┬──────────────┐
+ ↓              ↓              ↓
+Semáforos   BD réplica     PC3 monitoreo
+```
 
 ## Autores
 
