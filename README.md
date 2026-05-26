@@ -173,25 +173,6 @@ python healthcheck.py
 python monitoreo.py
 ```
 
-## 🖥️ OPCIÓN 2 — EJECUCIÓN AUTOMÁTICA (SSH)
-
-El sistema puede ser desplegado automáticamente en múltiples máquinas usando SSH.
-
-🔐 Requisitos:
-* SSH activo en todas las máquinas
-* Acceso sin contraseña (ssh-keygen + ssh-copy-id)
-* Mismo path del proyecto en cada PC
-🚀 Script de arranque distribuido
-
-```bash
- run_all_ssh.sh
-```
-📌 ¿Qué hace?
-* Lee config.json
-* Obtiene IPs de PC1, PC2 y PC3
-* Ejecuta cada servicio por SSH
-* Deja procesos en segundo plano con nohup
-
 🧪 Flujo del sistema
 ```bash
 Sensores (PC1)
