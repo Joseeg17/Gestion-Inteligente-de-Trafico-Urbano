@@ -96,7 +96,7 @@ def main():
     try:
         while True:
             # Itera y procesa cada punto geográfico/intersección del mapa simulado
-            for interseccion in intersections:
+            for interseccion in intersecciones:
                 # Formatea el identificador único para este sensor GPS (ej: "gps_i1")
                 sensor_id = f"gps_{interseccion.lower()}"
                 
