@@ -171,8 +171,8 @@ trafico_urbano/
 ### Paso 1 — Clonar el repositorio en los 3 PCs
 
 ```bash
-git clone <https://github.com/RicardoHurtadoF/Gestion-Inteligente-de-Trafico-Urbano> trafico_urbano
-cd trafico_urbano
+git clone https://github.com/RicardoHurtadoF/Gestion-Inteligente-de-Trafico-Urbano traficoUrbano
+cd traficoUrbano
 ```
 
 ### Paso 2 — Arrancar en orden
