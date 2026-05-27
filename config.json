@@ -9,7 +9,7 @@
   },
   "pc3": {
     "host": "10.43.99.109",
-    "role": "bd_principal_monitoreo"
+    "role": "bd_principal_monitoreo",
      "frontend_host": "0.0.0.0",
     "frontend_port": 8080
   },
