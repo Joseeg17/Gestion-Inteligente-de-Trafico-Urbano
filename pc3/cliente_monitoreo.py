@@ -42,9 +42,9 @@ AYUDA = f"""
   salir
 
 {BOLD}Intersecciones válidas:{RST}
-  INT_A1  INT_A2  INT_A3
-  INT_B1  INT_B2  INT_B3
-  INT_C1  INT_C2  INT_C3
+  I11  I12  I13
+  I21  I22  I23
+  I31  I32  I33
 """
 
 # =======================
