@@ -248,7 +248,7 @@ Toda la configuración de red está en `config.json`. Para cambiar las IPs solo 
   }
 }
 ```
-
+si se quiere aprender mas del proyecto o dudas de como se utiliza puede acceder a este video por medio de este [link](https://www.youtube.com/watch?v=ctx-n9-hhjo)
 ---
 
 ## Tecnologías
