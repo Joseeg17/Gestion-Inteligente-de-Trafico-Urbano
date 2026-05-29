@@ -16,56 +16,65 @@ Arquitectura de 3 nodos con comunicación ZeroMQ, persistencia SQLite y failover
 ```mermaid
 flowchart LR
 
-%% ===== NODOS =====
-subgraph PC1["PC1 (10.43.99.126) - Sensores"]
-    cam[sensor_camara]
-    esp[sensor_espira]
-    gps[sensor_gps]
+%% =======================
+%% PC1 - INGESTA + BROKER
+%% =======================
+subgraph PC1["Computadora 1 (10.43.99.126) - Ingesta"]
+    cam["sensor_camara"]
+    esp["sensor_espira"]
+    gps["sensor_gps"]
+    broker["Broker ZMQ\n(Ingesta de datos)"]
 end
 
-subgraph PC2["PC2 (10.43.99.140) - Broker + Procesamiento"]
-    broker[broker]
-    analitica[analitica]
-    replica[bd_replica]
-    semaforos[ctrl_semaforos]
+%% =======================
+%% PC2 - ANALÍTICA + CONTROL
+%% =======================
+subgraph PC2["Computadora 2 (10.43.99.140) - Procesamiento"]
+    analitica["Servicio de Analítica\n(Detección de congestión)"]
+    semaforos["Control de Semáforos"]
+    replica["BD Réplica"]
 end
 
-subgraph PC3["PC3 (10.43.99.109) - Backend + BD"]
-    db[bd_principal]
-    monitoreo[monitoreo]
-    frontend[frontend :8080]
+%% =======================
+%% PC3 - BD + MONITOREO
+%% =======================
+subgraph PC3["Computadora 3 (10.43.99.109) - Backend"]
+    db["Base de Datos (persistencia)"]
+    monitoreo["Monitoreo y consulta"]
+    frontend["Frontend (Dashboard)"]
 end
 
-%% ===== FLUJOS =====
+%% =======================
+%% FLUJOS DE DATOS
+%% =======================
 
-%% Sensores → Broker
-cam -- PUSH --> broker
-esp -- PUSH --> broker
-gps -- PUSH --> broker
+%% Sensores → Broker (Pub/Sub)
+cam -->|Pub/Sub| broker
+esp -->|Pub/Sub| broker
+gps -->|Pub/Sub| broker
 
-%% Broker → Analítica
-broker -- PUB --> analitica
+%% Broker → Analítica (Pub/Sub)
+broker -->|Pub/Sub| analitica
 
-%% Analítica → BD
-analitica -- PUSH --> db
+%% Analítica → Control (Push/Pull)
+analitica -->|Push/Pull| semaforos
 
-%% Analítica → Replica
-analitica -- PUSH --> replica
+%% Analítica → BD Principal (Push/Pull)
+analitica -->|Push/Pull| db
 
-%% Analítica → Semáforos
-analitica -- PUSH --> semaforos
+%% Analítica → BD Réplica (Failover)
+analitica -->|Push/Pull / Failover| replica
 
-%% Monitoreo consulta BD
-monitoreo -- REP --> db
+%% Monitoreo ↔ BD (Req/Rep)
+monitoreo -->|Req/Rep| db
 
-%% Frontend
-frontend --> monitoreo
+%% Frontend → Monitoreo
+frontend -->|HTTP| monitoreo
 
-%% Health Check
-broker -- PUB (PC3_UP / PC3_DOWN) --> analitica
-
-%% Failover
-analitica -->|activa failover| replica
+%% =======================
+%% ESTILO (OPCIONAL)
+%% =======================
+classDef pc fill:#f5f5f5,stroke:#999,stroke-width:1px;
 ```
 
 ### Patrones ZeroMQ usados
