@@ -81,7 +81,7 @@ classDef pc fill:#f5f5f5,stroke:#999,stroke-width:1px;
 
 | Patrón | Dónde | Para qué |
 |--------|-------|----------|
-| PUSH/PULL | Sensores → Broker | Eventos de tráfico |
+| PUB/SUB  | Sensores → Broker | Eventos de tráfico |
 | PUB/SUB | Broker → Analítica | Distribución de eventos |
 | PUSH/PULL | Analítica → BD principal / réplica | Persistencia |
 | PUSH/PULL | Analítica → Control semáforos | Comandos de semáforo |
