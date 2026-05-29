@@ -2,7 +2,10 @@
 """
 Monitoreo (PC3).
 - Hilo heartbeat: envía pulso periódico a health_check de PC2.
-- Loop principal: atiende consultas REQ/REP de clientes (cliente_monitoreo.py).
+- Loop REP: atiende consultas del cliente (cliente_monitoreo.py).
+  Comandos: consultar, historico, ambulancia/priorizar.
+- Comando ambulancia: reenvía orden de VERDE urgente a analítica (PC2)
+  mediante un socket REQ separado.
 """
 
 import json
@@ -11,200 +14,229 @@ import sqlite3
 import sys
 import threading
 import time
+
 import zmq
 
-# Modifica el path de ejecución de Python para poder importar utilidades compartidas desde la raíz
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Importaciones de configuración y sistemas de logs comunes
 from common.config_loader import load_config
-from common.utils import log_componente
+from common.db import consultar_historico_rango
+from common.utils import generar_intersecciones_3x3, generar_timestamp_iso, log_componente
 
-# Identificadores globales y rutas de acceso físico a las bases de datos de la PC3
 COMPONENTE   = "monitoreo"
 DB_PRINCIPAL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pc3_principal.db")
+INTERSECCIONES = generar_intersecciones_3x3()
 
 
 # ---------------------------------------------------------------------------
-# Heartbeat hacia PC2 (Ejecución en Hilo Secundario)
+# Heartbeat
 # ---------------------------------------------------------------------------
 
 def enviar_heartbeat(host_pc2: str, puerto: int) -> None:
-    """
-    Mantiene un canal PUSH abierto hacia la máquina PC2.
-    Envía de forma constante señales periódicas de vida para evitar falsos positivos de caída.
-    """
     ctx  = zmq.Context()
-    push = ctx.socket(zmq.PUSH) # Inicializa socket de empuje unidireccional
-    endpoint = f"tcp://{host_pc2}:{puerto}"
-    push.connect(endpoint) # Se conecta al listener de salud en la máquina intermedia
-    
-    log_componente(COMPONENTE, f"Heartbeat conectado a {endpoint}")
-    
+    push = ctx.socket(zmq.PUSH)
+    push.connect(f"tcp://{host_pc2}:{puerto}")
+    log_componente(COMPONENTE, f"Heartbeat → tcp://{host_pc2}:{puerto}")
     try:
         while True:
-            # Emite el token regular de presencia textual
             push.send_string("heartbeat")
             log_componente(COMPONENTE, "Heartbeat enviado")
-            # Frecuencia del pulso: Espera exactamente 3 segundos antes del siguiente ciclo
             time.sleep(3)
     except Exception as exc:
-        # Captura cualquier error de socket o de red e informa al log central
         log_componente(COMPONENTE, f"Heartbeat error: {exc}", nivel="ERROR")
     finally:
-        # Libera recursos e inactiva los subprocesos de red de ZMQ
         push.close(linger=0)
         ctx.term()
 
 
 # ---------------------------------------------------------------------------
-# Capa de Consultas Analíticas (SQLite Interacting)
+# Consultas BD
 # ---------------------------------------------------------------------------
 
 def consultar_interseccion(interseccion: str) -> str:
-    """
-    Realiza una consulta agregada para extraer el estado resumido de una intersección vial.
-    Devuelve un string serializado en formato JSON.
-    """
     try:
-        # Abre el descriptor de archivo de la base de datos local SQLite
         conn   = sqlite3.connect(DB_PRINCIPAL)
         cursor = conn.cursor()
-
-        # QUERY 1: Cuenta el volumen total de eventos históricos recibidos de cualquier sensor en esa esquina
         cursor.execute(
-            "SELECT COUNT(*) FROM eventos WHERE interseccion = ?",
+            "SELECT COUNT(*) FROM eventos WHERE interseccion = ?", (interseccion,)
+        )
+        total = cursor.fetchone()[0]
+        cursor.execute(
+            """SELECT estado, motivo, timestamp
+               FROM acciones_semaforo
+               WHERE interseccion = ?
+               ORDER BY id DESC LIMIT 1""",
             (interseccion,),
         )
-        total_eventos = cursor.fetchone()[0] # Extrae el entero del conteo global
-
-        # QUERY 2: Obtiene la última acción de semáforo registrada ordenando por ID auto-incremental decreciente
-        cursor.execute(
-            """
-            SELECT estado, motivo, timestamp
-            FROM acciones_semaforo
-            WHERE interseccion = ?
-            ORDER BY id DESC LIMIT 1
-            """,
-            (interseccion,),
-        )
-        accion = cursor.fetchone() # Captura la tupla de resultados o devuelve None
-        conn.close() # Cierra el puntero de conexión inmediatamente para evitar bloqueos del archivo de BD
-
-        # Si existen registros de comandos en esa intersección, concatena el JSON de respuesta
+        accion = cursor.fetchone()
+        conn.close()
         if accion:
-            estado, motivo, timestamp = accion
             return json.dumps({
-                "interseccion":   interseccion,
-                "estado":         estado,
-                "motivo":         motivo,
-                "ultimo_cambio":  timestamp,
-                "total_eventos":  total_eventos,
+                "interseccion":  interseccion,
+                "estado":        accion[0],
+                "motivo":        accion[1],
+                "ultimo_cambio": accion[2],
+                "total_eventos": total,
             }, ensure_ascii=False)
-
-        # Respuesta de contingencia si la calle es válida pero no ha registrado tráfico aún
         return json.dumps({"interseccion": interseccion, "info": "sin datos aún"})
-
     except sqlite3.Error as exc:
-        # Manejo de excepciones en caso de corrupción o fallo en el motor SQLite
         return json.dumps({"error": str(exc)})
 
 
-def consultar_historico(interseccion: str, limite: int = 10) -> str:
-    """
-    Recupera una traza de auditoría con las últimas 'N' decisiones tomadas por el motor analítico.
-    """
+def consultar_historico(interseccion: str, limite: int = 5) -> str:
     try:
         conn   = sqlite3.connect(DB_PRINCIPAL)
         cursor = conn.cursor()
-        
-        # Ejecuta la consulta de filtrado aplicando un parámetro dinámico LIMIT
         cursor.execute(
-            """
-            SELECT estado, motivo, duracion, timestamp
-            FROM acciones_semaforo
-            WHERE interseccion = ?
-            ORDER BY id DESC LIMIT ?
-            """,
+            """SELECT estado, motivo, duracion, timestamp
+               FROM acciones_semaforo
+               WHERE interseccion = ?
+               ORDER BY id DESC LIMIT ?""",
             (interseccion, limite),
         )
-        
-        # List Comprehension para parsear las tuplas nativas a diccionarios limpios de Python
         rows = [
             {"estado": r[0], "motivo": r[1], "duracion": r[2], "timestamp": r[3]}
             for r in cursor.fetchall()
         ]
         conn.close()
-        
-        # Retorna el árbol estructurado convertido a JSON string
         return json.dumps({"interseccion": interseccion, "historico": rows}, ensure_ascii=False)
     except sqlite3.Error as exc:
         return json.dumps({"error": str(exc)})
 
 
 # ---------------------------------------------------------------------------
-# Hilo Principal (Orquestador de Comandos REP)
+# Comando ambulancia → analítica
+# ---------------------------------------------------------------------------
+
+def enviar_ambulancia(interseccion: str, host_pc2: str, puerto_analitica: int) -> str:
+    """
+    Envía una orden de prioridad VERDE urgente directamente a analítica (PC2).
+    Usa REQ/REP para confirmar que analítica recibió la orden.
+    """
+    ctx = zmq.Context()
+    req = ctx.socket(zmq.REQ)
+    req.setsockopt(zmq.RCVTIMEO, 4000)
+    endpoint = f"tcp://{host_pc2}:{puerto_analitica}"
+    req.connect(endpoint)
+
+    orden = json.dumps({
+        "tipo":         "orden_directa",
+        "interseccion": interseccion,
+        "estado":       "VERDE",
+        "duracion":     60,
+        "motivo":       "ambulancia",
+        "timestamp":    generar_timestamp_iso(),
+    }, ensure_ascii=False)
+
+    log_componente(COMPONENTE, f"Enviando orden AMBULANCIA → {interseccion} a {endpoint}")
+
+    try:
+        req.send_string(orden)
+        confirmacion = req.recv_string()
+        log_componente(COMPONENTE, f"Confirmación de analítica: {confirmacion}")
+        return json.dumps({
+            "ok":           True,
+            "interseccion": interseccion,
+            "accion":       "VERDE 60s",
+            "motivo":       "ambulancia",
+            "confirmacion": confirmacion,
+        }, ensure_ascii=False)
+    except zmq.Again:
+        log_componente(COMPONENTE, "Analítica no respondió (timeout)", nivel="ERROR")
+        return json.dumps({"error": "analítica no respondió (timeout 4s)"})
+    finally:
+        req.close(linger=0)
+        ctx.term()
+
+
+# ---------------------------------------------------------------------------
+# Main
 # ---------------------------------------------------------------------------
 
 def main():
-    # 1. PARSEO DE DIRECCIONES DE INFRAESTRUCTURA
     config   = load_config()
-    host_pc2 = config["pc2"]["host"]                  # Dirección IP de la máquina intermedia (PC2)
-    puerto_hc   = config["ports"]["healthcheck"]      # Puerto de escucha del monitor de salud
-    puerto_rep  = config["ports"]["monitoreo_to_analitica"] # Puerto local para peticiones síncronas
+    host_pc2 = config["pc2"]["host"]
+    puerto_hc          = config["ports"]["healthcheck"]
+    puerto_rep         = config["ports"]["monitoreo_to_analitica"]
+    puerto_analitica   = config["ports"].get("analitica_ordenes", 5562)
 
-    # 2. DISPARO DEL HILO DE PULSO (BACKGROUND HEARTBEAT)
-    # Se configura como daemon=True para que no impida el cierre del script si el bucle principal cae
+    # Hilo heartbeat
     threading.Thread(
         target=enviar_heartbeat,
         args=(host_pc2, puerto_hc),
         daemon=True,
     ).start()
 
-    # 3. ENLAZADO DEL SOCKET REP (RESPONSE)
     ctx = zmq.Context()
-    rep = ctx.socket(zmq.REP) # Socket síncrono del patrón Pregunta/Respuesta
-    rep.bind(f"tcp://*:{puerto_rep}") # Escucha en todas las interfaces de red locales (* indicando 0.0.0.0)
+    rep = ctx.socket(zmq.REP)
+    rep.bind(f"tcp://*:{puerto_rep}")
     log_componente(COMPONENTE, f"REP escuchando en tcp://*:{puerto_rep}")
+    log_componente(COMPONENTE, f"Órdenes directas → analítica tcp://{host_pc2}:{puerto_analitica}")
 
-    # 4. BUCLE DE ATENCIÓN A SOLICITUDES DE CLIENTES
     try:
         while True:
-            # Espera bloqueante de strings entrantes por la red
             mensaje = rep.recv_string()
-            log_componente(COMPONENTE, f"Solicitud: {mensaje!r}")
+            log_componente(COMPONENTE, f"Solicitud recibida: {mensaje!r}")
 
-            # Descompone el string por espacios en blanco para separar el comando de los argumentos
             partes  = mensaje.strip().split()
             comando = partes[0].lower() if partes else ""
 
-            # EVALUACIÓN DE OPCIONES DE MENSAJERÍA:
-            # Ejecuta la consulta puntual de estado actual (Uso: "consultar I1")
+            # ── consultar ─────────────────────────────────────────
             if comando == "consultar" and len(partes) >= 2:
-                rep.send_string(consultar_interseccion(partes[1]))
+                inter = partes[1].upper()
+                if inter not in INTERSECCIONES:
+                    rep.send_string(json.dumps({"error": f"intersección inválida: {inter}"}))
+                else:
+                    rep.send_string(consultar_interseccion(inter))
 
-            # Ejecuta la consulta del listado histórico (Uso: "historico I1 15")
+            # ── historico ─────────────────────────────────────────
             elif comando == "historico" and len(partes) >= 2:
-                # Si el usuario no provee un límite explícito, aplica el valor de fallback (10)
-                limite = int(partes[2]) if len(partes) >= 3 else 10
-                rep.send_string(consultar_historico(partes[1], limite))
+                inter  = partes[1].upper()
+                limite = int(partes[2]) if len(partes) >= 3 else 5
+                if inter not in INTERSECCIONES:
+                    rep.send_string(json.dumps({"error": f"intersección inválida: {inter}"}))
+                else:
+                    rep.send_string(consultar_historico(inter, limite))
 
-            # Manejo preventivo de errores sintácticos para evitar colgar el patrón REQ/REP
+            # ── rango ─────────────────────────────────────────────
+            # Uso: rango <DESDE> <HASTA> [INTER]
+            # Ejemplo: rango 06:00 09:00
+            #          rango 06:00 09:00 INT_B2
+            elif comando == "rango" and len(partes) >= 3:
+                desde = partes[1]
+                hasta = partes[2]
+                inter = partes[3].upper() if len(partes) >= 4 else None
+                if inter and inter not in INTERSECCIONES:
+                    rep.send_string(json.dumps({"error": f"intersección inválida: {inter}"}))
+                else:
+                    try:
+                        resultado = consultar_historico_rango(DB_PRINCIPAL, desde, hasta, inter)
+                        rep.send_string(json.dumps(resultado, ensure_ascii=False))
+                    except Exception as exc:
+                        rep.send_string(json.dumps({"error": str(exc)}))
+
+            # ── ambulancia / priorizar ────────────────────────────
+            elif comando in ("ambulancia", "priorizar") and len(partes) >= 2:
+                inter = partes[1].upper()
+                if inter not in INTERSECCIONES:
+                    rep.send_string(json.dumps({"error": f"intersección inválida: {inter}"}))
+                else:
+                    resultado = enviar_ambulancia(inter, host_pc2, puerto_analitica)
+                    rep.send_string(resultado)
+
             else:
                 rep.send_string(json.dumps({
                     "error": "comando_desconocido",
-                    "uso":   "consultar <INTER> | historico <INTER> [N]",
+                    "uso":   "consultar <INTER> | historico <INTER> [N] | ambulancia <INTER>",
                 }))
 
-    # 5. PROCEDIMIENTO DE APAGADO DE COMPONENTES
     except KeyboardInterrupt:
-        # Permite la cancelación del servicio mediante la señal de teclado Ctrl+C
         log_componente(COMPONENTE, "Detenido manualmente.", nivel="WARN")
     finally:
-        # Cierra los hilos del socket liberando el puerto bindeado del S.O.
         rep.close(linger=0)
         ctx.term()
 
 
 if __name__ == "__main__":
     main()
+
